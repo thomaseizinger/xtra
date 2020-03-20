@@ -118,6 +118,38 @@ async fn main() {
     let average_ns = duration.as_nanos() / total_count as u128; // <150ns on my machine
     println!("do_send avg time of processing: {}ns", average_ns);
 
+    /* Time do_send high contention */
+
+    let addr = Counter { count: 0 }.spawn();
+    let addr = &addr;
+
+    let cpus = num_cpus::get();
+    let cpus = if cpus > 1 {
+        cpus - 1
+    } else {
+        cpus
+    };
+
+    let mut tasks = Vec::with_capacity(cpus);
+    for _ in 0..cpus {
+        let addr = addr.clone();
+        let task = tokio::task::spawn_blocking(move || {
+            for _ in 0..(COUNT / cpus) + 1 {
+                let _ = addr.do_send(Increment);
+            }
+        });
+        tasks.push(task);
+    }
+    let start = Instant::now();
+
+    futures::future::join_all(tasks).await;
+    let total_count = addr.send(GetCount).await.unwrap();
+
+    let duration = Instant::now() - start;
+    let average_ns = duration.as_nanos() / total_count as u128; // <150ns on my machine
+    println!("do_send avg time of processing with high contention: {}ns", average_ns);
+    assert!(total_count > COUNT, "total_count should be greater than COUNT!");
+
     /* Time do_send async */
 
     let addr = Counter { count: 0 }.spawn();
