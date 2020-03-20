@@ -37,8 +37,8 @@ impl<A: Actor> Drop for ActorManager<A> {
 
 /// Very common pattern. This checks if the actor is still running after handling a
 /// message/notification and returns out of the actor manage loop if not, thereby dropping the
-/// manager and calling the `stopped` method on the actor. This couldn't be a function because of
-/// the returns.
+/// manager and calling the `stopped` method on the actor. It also handles immediate notifications.
+/// This couldn't be a function because of the returns.
 macro_rules! post_handling_checks {
     ($this:ident) => {
         if !$this.check_runnning() {
@@ -164,14 +164,6 @@ impl<A: Actor> ActorManager<A> {
         }
 
         // Handle any last late notifications that were sent after the last strong address was dropped
-        while let Ok(msg) = self.receiver.recv_async().await {
-            if let ManagerMessage::LateNotification(notification) = msg {
-                notification.handle(&mut self.actor, &mut self.ctx).await;
-                post_handling_checks!(self);
-            }
-        }
-
-        // Handle the final notifications
         while let Ok(msg) = self.receiver.recv_async().await {
             if let ManagerMessage::LateNotification(notification) = msg {
                 notification.handle(&mut self.actor, &mut self.ctx).await;
