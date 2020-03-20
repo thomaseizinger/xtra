@@ -1,7 +1,7 @@
 use crate::envelope::{NonReturningEnvelope, ReturningEnvelope};
 use crate::manager::ManagerMessage;
 use crate::{Actor, Handler, Message, MessageChannel, WeakMessageChannel};
-use tokio::sync::mpsc::{UnboundedSender as Sender};
+use crate::chan::{Channel as Sender};
 use futures::channel::oneshot;
 use futures::task::{Context, Poll};
 use futures::{Future, Sink};

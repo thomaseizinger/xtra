@@ -1,6 +1,6 @@
 use crate::envelope::MessageEnvelope;
 use crate::{Actor, Address, Context, KeepRunning, WeakAddress};
-use tokio::sync::mpsc::{UnboundedReceiver as Receiver};
+use crate::chan::{Channel as Receiver};
 use std::sync::Arc;
 
 /// A message that can be sent by an [`Address`](struct.Address.html) to the [`ActorManager`](struct.ActorManager.html)
@@ -73,7 +73,7 @@ impl<A: Actor> ActorManager<A> {
     /// its manager. The `ActorManager::manage` future has to be executed for the actor to actually
     /// start.
     pub(crate) fn start(actor: A) -> (Address<A>, ActorManager<A>) {
-        let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
+        let (sender, receiver) = crate::chan::unbounded_channel();
         let ref_counter = Arc::new(());
         let addr = WeakAddress {
             sender: sender.clone(),
@@ -138,7 +138,7 @@ impl<A: Actor> ActorManager<A> {
         }
 
         // Listen for any messages for the ActorManager
-        while let Some(msg) = self.receiver.recv().await {
+        while let msg = self.receiver.recv().await {
             match msg {
                 // A new message from an address has arrived, so handle it
                 ManagerMessage::Message(msg) => {
@@ -164,7 +164,7 @@ impl<A: Actor> ActorManager<A> {
         }
 
         // Handle any last late notifications that were sent after the last strong address was dropped
-        while let Some(msg) = self.receiver.recv().await {
+        while let msg = self.receiver.recv().await {
             if let ManagerMessage::LateNotification(notification) = msg {
                 notification.handle(&mut self.actor, &mut self.ctx).await;
                 post_handling_checks!(self);

@@ -23,6 +23,8 @@ pub use context::Context;
 mod manager;
 pub use manager::ActorManager;
 
+mod chan;
+
 /// Commonly used types from `xtra`
 pub mod prelude {
     pub use crate::address::{Address, AddressExt};
