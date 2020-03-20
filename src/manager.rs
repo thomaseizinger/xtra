@@ -1,7 +1,6 @@
 use crate::envelope::MessageEnvelope;
 use crate::{Actor, Address, Context, KeepRunning, WeakAddress};
-use futures::channel::mpsc::{self, UnboundedReceiver};
-use futures::StreamExt;
+use flume::Receiver;
 use std::sync::Arc;
 
 /// A message that can be sent by an [`Address`](struct.Address.html) to the [`ActorManager`](struct.ActorManager.html)
@@ -21,7 +20,7 @@ pub(crate) enum ManagerMessage<A: Actor> {
 /// A manager for the actor which handles incoming messages and stores the context. Its managing
 /// loop can be started with [`ActorManager::manage`](struct.ActorManager.html#method.manage).
 pub struct ActorManager<A: Actor> {
-    receiver: UnboundedReceiver<ManagerMessage<A>>,
+    receiver: Receiver<ManagerMessage<A>>,
     actor: A,
     ctx: Context<A>,
     /// The reference counter of the actor. This tells us how many external strong addresses
@@ -34,6 +33,22 @@ impl<A: Actor> Drop for ActorManager<A> {
     fn drop(&mut self) {
         self.actor.stopped(&mut self.ctx);
     }
+}
+
+/// Very common pattern. This checks if the actor is still running after handling a
+/// message/notification and returns out of the actor manage loop if not, thereby dropping the
+/// manager and calling the `stopped` method on the actor. This couldn't be a function because of
+/// the returns.
+macro_rules! post_handling_checks {
+    ($this:ident) => {
+        if !$this.check_runnning() {
+            return;
+        }
+
+        if !$this.handle_immediate_notifications().await {
+            return;
+        }
+    };
 }
 
 impl<A: Actor> ActorManager<A> {
@@ -58,7 +73,7 @@ impl<A: Actor> ActorManager<A> {
     /// its manager. The `ActorManager::manage` future has to be executed for the actor to actually
     /// start.
     pub(crate) fn start(actor: A) -> (Address<A>, ActorManager<A>) {
-        let (sender, receiver) = mpsc::unbounded();
+        let (sender, receiver) = flume::unbounded();
         let ref_counter = Arc::new(());
         let addr = WeakAddress {
             sender: sender.clone(),
@@ -83,6 +98,7 @@ impl<A: Actor> ActorManager<A> {
 
     /// Check if the Context is still sent to running, returning whether to return from the manage
     /// loop or not
+    #[inline]
     fn check_runnning(&mut self) -> bool {
         // Check if the context was stopped, and if so return, thereby dropping the
         // manager and calling `stopped` on the actor
@@ -122,27 +138,17 @@ impl<A: Actor> ActorManager<A> {
         }
 
         // Listen for any messages for the ActorManager
-        while let Some(msg) = self.receiver.next().await {
+        while let Ok(msg) = self.receiver.recv_async().await {
             match msg {
                 // A new message from an address has arrived, so handle it
                 ManagerMessage::Message(msg) => {
                     msg.handle(&mut self.actor, &mut self.ctx).await;
-                    if !self.check_runnning() {
-                        return;
-                    }
-                    if !self.handle_immediate_notifications().await {
-                        return;
-                    }
+                    post_handling_checks!(self);
                 }
                 // A late notification has arrived, so handle it
                 ManagerMessage::LateNotification(notification) => {
                     notification.handle(&mut self.actor, &mut self.ctx).await;
-                    if !self.check_runnning() {
-                        return;
-                    }
-                    if !self.handle_immediate_notifications().await {
-                        return;
-                    }
+                    post_handling_checks!(self);
                 }
                 // An address in the process of being dropped has realised that it could be the last
                 // strong address to the actor, so we need to check if that is still the case, if so
@@ -158,20 +164,18 @@ impl<A: Actor> ActorManager<A> {
         }
 
         // Handle any last late notifications that were sent after the last strong address was dropped
-        // We can't .await, because that would mean that we are awaiting forever! So, instead, we do
-        // `next_message` and check if the result is `Ok`. Because we know that any late notifications
-        // sent from the context must be fully send by now due to it being marked as stopped (so
-        // that no other addresses can be created and sending concurrently), we can make the inference
-        // that if `next_message` returns `Err`, there are no more late notifications to handle.
-        while let Ok(Some(msg)) = self.receiver.try_next() {
+        while let Ok(msg) = self.receiver.recv_async().await {
             if let ManagerMessage::LateNotification(notification) = msg {
                 notification.handle(&mut self.actor, &mut self.ctx).await;
-                if !self.check_runnning() {
-                    return;
-                }
-                if !self.handle_immediate_notifications().await {
-                    return;
-                }
+                post_handling_checks!(self);
+            }
+        }
+
+        // Handle the final notifications
+        while let Ok(msg) = self.receiver.recv_async().await {
+            if let ManagerMessage::LateNotification(notification) = msg {
+                notification.handle(&mut self.actor, &mut self.ctx).await;
+                post_handling_checks!(self);
             }
         }
     }

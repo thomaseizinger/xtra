@@ -3,12 +3,12 @@ A tiny, fast, and safe actor framework. It is modelled around Actix (copyright a
 
 ## Features
 - Safe: there is no unsafe code in xtra (there is some necessary in `futures`, but that's par for the course).
-- Small and lightweight: it only depends on `futures` by default.
+- Small and lightweight: it only depends on `futures` and `flume` (a very light crate) by default.
 - Asynchronous and synchronous message handlers.
 - Simple asynchronous message handling interface which allows `async`/`await` syntax even when borrowing `self`.
 - Does not depend on its own runtime and can be run with any futures executor ([Tokio](https://tokio.rs/) and 
 [async-std](https://async.rs/) have the `Actor::spawn` convenience method implemented out of the box).
-- Quite fast (under Tokio, <170ns time from sending a message to it being processed for sending without waiting for a 
+- Quite fast (under Tokio, ~100ns time from sending a message to it being processed for sending without waiting for a 
 result on my development machine with an AMD Ryzen 3 3200G)
 
 ## Caveats
@@ -19,7 +19,7 @@ It also uses [`impl Trait` Type Aliases](https://github.com/rust-lang/rfcs/pull/
 returned from the `Handler` trait (the library, however, is not totally alloc-free). This means that it requires
 nightly to use, and may be unstable in future as those features evolve. What you get in return for this is a cleaner,
 simpler, and more expressive API. 
-- It is also still very much under development, so it may not be ready for production code.
+- Because of this, it may not be wise to use in production code.
 
 ## Example
 ```rust

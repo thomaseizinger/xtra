@@ -1,12 +1,12 @@
 use crate::envelope::{NonReturningEnvelope, ReturningEnvelope};
 use crate::manager::ManagerMessage;
 use crate::{Actor, Handler, Message, MessageChannel, WeakMessageChannel};
-use futures::channel::mpsc::UnboundedSender;
-use futures::channel::oneshot::Receiver;
+use flume::Sender;
+use futures::channel::oneshot;
 use futures::task::{Context, Poll};
 use futures::{Future, Sink};
 #[cfg(any(doc, feature = "with-tokio-0_2", feature = "with-async_std-1"))]
-use futures::{Stream, StreamExt, FutureExt};
+use futures::{Stream, StreamExt};
 use std::pin::Pin;
 use std::sync::{Arc, Weak};
 
@@ -14,7 +14,7 @@ use std::sync::{Arc, Weak};
 /// It resolves to `Result<M::Result, Disconnected>`.
 pub enum MessageResponseFuture<M: Message> {
     Disconnected,
-    Result(Receiver<M::Result>),
+    Result(oneshot::Receiver<M::Result>),
 }
 
 impl<M: Message> Future for MessageResponseFuture<M> {
@@ -76,16 +76,16 @@ pub trait AddressExt<A: Actor> {
     #[doc(cfg(feature = "with-async_std-1"))]
     #[cfg(any(doc, feature = "with-tokio-0_2", feature = "with-async_std-1"))]
     fn attach_stream<S, M>(self, mut stream: S)
-        where
-            M: Message,
-            A: Handler<M> + Send,
-            S: Stream<Item = M> + Send + Unpin + 'static,
-            Self: Sized + Send + Sink<M, Error = Disconnected> + 'static,
+    where
+        M: Message,
+        A: Handler<M> + Send,
+        S: Stream<Item = M> + Send + Unpin + 'static,
+        Self: Sized + Send + Sink<M, Error = Disconnected> + 'static,
     {
         #[cfg(feature = "with-async_std-1")]
-            async_std::task::spawn(async move {
+        async_std::task::spawn(async move {
             while let Some(m) = stream.next().await {
-                if let Err(e) = self.do_send(m) {
+                if let Err(_) = self.do_send(m) {
                     break;
                 }
                 async_std::task::yield_now().await;
@@ -93,9 +93,9 @@ pub trait AddressExt<A: Actor> {
         });
 
         #[cfg(feature = "with-tokio-0_2")]
-            tokio::spawn(async move {
+        tokio::spawn(async move {
             while let Some(m) = stream.next().await {
-                if let Err(e) = self.do_send(m) {
+                if let Err(_) = self.do_send(m) {
                     break;
                 }
                 tokio::task::yield_now().await;
@@ -111,7 +111,7 @@ pub trait AddressExt<A: Actor> {
 /// by calling the [`Actor::create`](trait.Actor.html#method.create) or  [`Actor::spawn`](trait.Actor.html#method.spawn)
 /// methods.
 pub struct Address<A: Actor> {
-    pub(crate) sender: UnboundedSender<ManagerMessage<A>>,
+    pub(crate) sender: Sender<ManagerMessage<A>>,
     pub(crate) ref_counter: Arc<()>,
 }
 
@@ -159,7 +159,7 @@ impl<A: Actor + Send> Address<A> {
 
 impl<A: Actor> AddressExt<A> for Address<A> {
     fn is_connected(&self) -> bool {
-        !self.sender.is_closed()
+        true // A strong address is always connected, as flume channels cannot disconnect
     }
 
     fn do_send<M>(&self, message: M) -> Result<(), Disconnected>
@@ -169,9 +169,10 @@ impl<A: Actor> AddressExt<A> for Address<A> {
     {
         // To read more about what an envelope is and why we use them, look under `envelope.rs`
         let envelope = NonReturningEnvelope::<A, M>::new(message);
-        self.sender
-            .unbounded_send(ManagerMessage::Message(Box::new(envelope)))
-            .map_err(|_| Disconnected)
+        let msg = ManagerMessage::Message(Box::new(envelope));
+        // Flume channels can't disconnect and it won't be full (unbounded channel)
+        let _ = self.sender.send(msg);
+        Ok(())
     }
 
     fn send<M>(&self, message: M) -> MessageResponseFuture<M>
@@ -181,9 +182,9 @@ impl<A: Actor> AddressExt<A> for Address<A> {
         M::Result: Send,
     {
         let (envelope, rx) = ReturningEnvelope::<A, M>::new(message);
-        let _ = self
-            .sender
-            .unbounded_send(ManagerMessage::Message(Box::new(envelope)));
+        let msg = ManagerMessage::Message(Box::new(envelope));
+        // Flume channels can't disconnect and it won't be full (unbounded channel)
+        let _ = self.sender.send(msg);
         MessageResponseFuture::Result(rx)
     }
 }
@@ -195,36 +196,24 @@ where
 {
     type Error = Disconnected;
 
-    fn poll_ready(self: Pin<&mut Self>, ctx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        if self.is_connected() {
-            self.sender.poll_ready(ctx).map_err(|_| Disconnected)
-        } else {
-            Poll::Ready(Err(Disconnected))
-        }
+    fn poll_ready(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(())) // Can't LBYL here
     }
 
     fn start_send(self: Pin<&mut Self>, message: M) -> Result<(), Self::Error> {
-        if self.is_connected() {
-            let envelope = NonReturningEnvelope::<A, M>::new(message);
-            let msg = ManagerMessage::Message(Box::new(envelope));
-            Pin::new(&mut self.get_mut().sender)
-                .start_send(msg)
-                .map_err(|_| Disconnected)
-        } else {
-            Err(Disconnected)
-        }
+        let envelope = NonReturningEnvelope::<A, M>::new(message);
+        let msg = ManagerMessage::Message(Box::new(envelope));
+        // Flume channels can't disconnect and it won't be full (unbounded channel)
+        let _ = self.sender.send(msg);
+        Ok(())
     }
 
-    fn poll_flush(self: Pin<&mut Self>, ctx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Pin::new(&mut self.get_mut().sender)
-            .poll_flush(ctx)
-            .map_err(|_| Disconnected)
+    fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
     }
 
-    fn poll_close(self: Pin<&mut Self>, ctx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Pin::new(&mut self.get_mut().sender)
-            .poll_close(ctx)
-            .map_err(|_| Disconnected)
+    fn poll_close(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
     }
 }
 
@@ -244,7 +233,8 @@ impl<A: Actor> Drop for Address<A> {
         // the only external one in existence. Therefore, we should notify the ActorManager that
         // there are potentially no more strong Addresses and the actor should be stopped.
         if Arc::strong_count(&self.ref_counter) == 2 {
-            let _ = self.sender.unbounded_send(ManagerMessage::LastAddress);
+            // Flume channels can't disconnect and it won't be full (unbounded channel)
+            let _ = self.sender.send(ManagerMessage::LastAddress);
         }
     }
 }
@@ -254,7 +244,7 @@ impl<A: Actor> Drop for Address<A> {
 /// the dropping of an actor. It is created by the [`Address::downgrade`](struct.Address.html#method.downgrade)
 /// or [`Address::into_downgraded`](struct.Address.html#method.into_downgraded) methods.
 pub struct WeakAddress<A: Actor> {
-    pub(crate) sender: UnboundedSender<ManagerMessage<A>>,
+    pub(crate) sender: Sender<ManagerMessage<A>>,
     pub(crate) ref_counter: Weak<()>,
 }
 
@@ -289,7 +279,7 @@ impl<A: Actor> AddressExt<A> for WeakAddress<A> {
         // Check that there are external strong addresses. If there are none, the actor is
         // disconnected and our message would interrupt its dropping. strong_count() == 2 because
         // Context and manager both hold a strong arc to the refcount
-        self.ref_counter.strong_count() > 1 && !self.sender.is_closed()
+        self.ref_counter.strong_count() > 1
     }
 
     fn do_send<M>(&self, message: M) -> Result<(), Disconnected>
@@ -300,9 +290,10 @@ impl<A: Actor> AddressExt<A> for WeakAddress<A> {
         if self.is_connected() {
             // To read more about what an envelope is and why we use them, look under `envelope.rs`
             let envelope = NonReturningEnvelope::<A, M>::new(message);
-            self.sender
-                .unbounded_send(ManagerMessage::Message(Box::new(envelope)))
-                .map_err(|_| Disconnected)
+            let msg = ManagerMessage::Message(Box::new(envelope));
+            // Flume channels can't disconnect and it won't be full (unbounded channel)
+            let _ = self.sender.send(msg);
+            Ok(())
         } else {
             Err(Disconnected)
         }
@@ -316,9 +307,9 @@ impl<A: Actor> AddressExt<A> for WeakAddress<A> {
     {
         if self.is_connected() {
             let (envelope, rx) = ReturningEnvelope::<A, M>::new(message);
-            let _ = self
-                .sender
-                .unbounded_send(ManagerMessage::Message(Box::new(envelope)));
+            let msg = ManagerMessage::Message(Box::new(envelope));
+            // Flume channels can't disconnect and it won't be full (unbounded channel)
+            let _ = self.sender.send(msg);
             MessageResponseFuture::Result(rx)
         } else {
             MessageResponseFuture::Disconnected
@@ -333,9 +324,9 @@ where
 {
     type Error = Disconnected;
 
-    fn poll_ready(self: Pin<&mut Self>, ctx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+    fn poll_ready(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         if self.is_connected() {
-            self.sender.poll_ready(ctx).map_err(|_| Disconnected)
+            Poll::Ready(Ok(()))
         } else {
             Poll::Ready(Err(Disconnected))
         }
@@ -345,29 +336,25 @@ where
         if self.is_connected() {
             let envelope = NonReturningEnvelope::<A, M>::new(message);
             let msg = ManagerMessage::Message(Box::new(envelope));
-            Pin::new(&mut self.get_mut().sender)
-                .start_send(msg)
-                .map_err(|_| Disconnected)
+            // Flume channels can't disconnect and it won't be full (unbounded channel)
+            let _ = self.sender.send(msg);
+            Ok(())
         } else {
             Err(Disconnected)
         }
     }
 
-    fn poll_flush(self: Pin<&mut Self>, ctx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+    fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         if self.is_connected() {
-            Pin::new(&mut self.get_mut().sender)
-                .poll_flush(ctx)
-                .map_err(|_| Disconnected)
+            Poll::Ready(Ok(()))
         } else {
             Poll::Ready(Err(Disconnected))
         }
     }
 
-    fn poll_close(self: Pin<&mut Self>, ctx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+    fn poll_close(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         if self.is_connected() {
-            Pin::new(&mut self.get_mut().sender)
-                .poll_close(ctx)
-                .map_err(|_| Disconnected)
+            Poll::Ready(Ok(()))
         } else {
             Poll::Ready(Err(Disconnected))
         }

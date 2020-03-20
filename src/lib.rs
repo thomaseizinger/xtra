@@ -7,7 +7,6 @@
     type_alias_impl_trait,
     doc_cfg
 )]
-
 #![deny(missing_docs, unsafe_code)]
 
 mod message_channel;

@@ -38,7 +38,7 @@ impl<A: Actor> Context<A> {
         if self.running {
             let strong = Address {
                 sender: self.address.sender.clone(),
-                ref_counter: self.address.ref_counter.upgrade().unwrap()
+                ref_counter: self.address.ref_counter.upgrade().unwrap(),
             };
 
             Some(strong)
@@ -68,10 +68,9 @@ impl<A: Actor> Context<A> {
         A: Handler<M> + Send,
     {
         let envelope = NonReturningEnvelope::<A, M>::new(msg);
-        let _ = self
-            .address
-            .sender
-            .unbounded_send(ManagerMessage::LateNotification(Box::new(envelope)));
+        let msg = ManagerMessage::LateNotification(Box::new(envelope));
+        // Flume channels can't disconnect and it won't be full (unbounded channel)
+        let _ = self.address.sender.send(msg);
     }
 
     /// Notify the actor with a synchronously handled message every interval until it is stopped
