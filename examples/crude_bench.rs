@@ -117,6 +117,7 @@ async fn main() {
     let duration = Instant::now() - start;
     let average_ns = duration.as_nanos() / total_count as u128; // <150ns on my machine
     println!("do_send avg time of processing: {}ns", average_ns);
+    assert_eq!(total_count, COUNT, "total_count should equal COUNT!");
 
     /* Time do_send high contention */
 
