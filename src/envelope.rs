@@ -1,3 +1,4 @@
+use std::fmt;
 use std::marker::PhantomData;
 
 use catty::{Receiver, Sender};
@@ -47,7 +48,7 @@ pub(crate) trait MessageEnvelope: Send {
 }
 
 /// An envelope that returns a result from a message. Constructed by the `AddressExt::do_send` method.
-pub(crate) struct ReturningEnvelope<A: Actor, M: Message> {
+pub(crate) struct ReturningEnvelope<A, M: Message> {
     message: M,
     result_sender: Sender<M::Result>,
     phantom: PhantomData<fn() -> A>,
@@ -88,7 +89,7 @@ impl<A: Handler<M>, M: Message> MessageEnvelope for ReturningEnvelope<A, M> {
 
 /// An envelope that does not return a result from a message. Constructed  by the `AddressExt::do_send`
 /// method.
-pub(crate) struct NonReturningEnvelope<A: Actor, M: Message> {
+pub(crate) struct NonReturningEnvelope<A, M: Message> {
     message: M,
     phantom: PhantomData<fn() -> A>,
 }
