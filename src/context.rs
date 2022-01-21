@@ -269,13 +269,63 @@ impl<A: Actor> Context<A> {
         actor: &mut A,
     ) -> ContinueManageLoop {
         match msg {
-            Either::Left(BroadcastMessage::Message(msg)) => msg.handle(actor, self).await,
+            Either::Left(BroadcastMessage::Message(msg)) => {
+                let mut time_spent = 0;
+                let sleep = 10;
+                let msg_str = format!("{:?}", msg);
+                let mut msg_handler = msg.handle(actor, self);
+
+                loop {
+                    match future::select(msg_handler, Delay::new(Duration::from_secs(sleep))).await
+                    {
+                        Either::Left(((), _)) => break,
+                        Either::Right(((), unfinished_handler)) => {
+                            time_spent += sleep;
+
+                            let actor_name = std::any::type_name::<A>();
+
+                            log::warn!(
+                                "Actor {} has been processing message {} for {} seconds",
+                                actor_name,
+                                msg_str,
+                                time_spent
+                            );
+
+                            msg_handler = unfinished_handler;
+                        }
+                    }
+                }
+            }
             Either::Left(BroadcastMessage::Shutdown) => {
                 self.running = RunningState::Stopped;
                 return ContinueManageLoop::ExitImmediately;
             }
             Either::Right(AddressMessage::Message(msg)) => {
-                msg.handle(actor, self).await;
+                let mut time_spent = 0;
+                let sleep = 10;
+                let msg_str = format!("{:?}", msg);
+                let mut msg_handler = msg.handle(actor, self);
+
+                loop {
+                    match future::select(msg_handler, Delay::new(Duration::from_secs(sleep))).await
+                    {
+                        Either::Left(((), _)) => break,
+                        Either::Right(((), unfinished_handler)) => {
+                            time_spent += sleep;
+
+                            let actor_name = std::any::type_name::<A>();
+
+                            log::warn!(
+                                "Actor {} has been processing message {} for {} seconds",
+                                actor_name,
+                                msg_str,
+                                time_spent
+                            );
+
+                            msg_handler = unfinished_handler;
+                        }
+                    }
+                }
             }
             Either::Right(AddressMessage::LastAddress) => {
                 if self.ref_counter.strong_count() == 0 {
@@ -383,7 +433,7 @@ impl<A: Actor> Context<A> {
     /// is only over other messages).
     pub fn notify<M>(&mut self, msg: M)
     where
-        M: Message,
+        M: Message + fmt::Debug,
         A: Handler<M>,
     {
         let envelope = Box::new(NonReturningEnvelope::<A, M>::new(msg));
@@ -395,7 +445,7 @@ impl<A: Actor> Context<A> {
     /// broadcast channel (it is unbounded).
     pub fn notify_all<M>(&mut self, msg: M)
     where
-        M: Message + Clone + Sync,
+        M: Message + Clone + Sync + fmt::Debug,
         A: Handler<M>,
     {
         let envelope = NonReturningEnvelope::<A, M>::new(msg);

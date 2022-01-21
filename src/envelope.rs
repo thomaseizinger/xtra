@@ -14,7 +14,7 @@ use crate::{Actor, Handler, Message};
 /// allows us to erase the type of the message when this is in dyn Trait format, thereby being able to
 /// use only one channel to send all the kinds of messages that the actor can receives. This does,
 /// however, induce a bit of allocation (as envelopes have to be boxed).
-pub(crate) trait MessageEnvelope: Send {
+pub(crate) trait MessageEnvelope: Send + fmt::Debug {
     /// The type of actor that this envelope carries a message for
     type Actor;
 
@@ -87,6 +87,12 @@ impl<A: Handler<M>, M: Message> MessageEnvelope for ReturningEnvelope<A, M> {
     }
 }
 
+impl<A, M: Message> fmt::Debug for ReturningEnvelope<A, M> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.message.fmt(f)
+    }
+}
+
 /// An envelope that does not return a result from a message. Constructed  by the `AddressExt::do_send`
 /// method.
 pub(crate) struct NonReturningEnvelope<A, M: Message> {
@@ -112,6 +118,15 @@ impl<A: Handler<M>, M: Message> MessageEnvelope for NonReturningEnvelope<A, M> {
         ctx: &'a mut Context<Self::Actor>,
     ) -> BoxFuture<'a, ()> {
         Box::pin(act.handle(self.message, ctx).map(|_| ()))
+    }
+}
+
+impl<A, M: Message> fmt::Debug for NonReturningEnvelope<A, M>
+where
+    M: fmt::Debug,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.message.fmt(f)
     }
 }
 
