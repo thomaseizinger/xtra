@@ -6,7 +6,6 @@
 pub use self::address::{Address, Disconnected, WeakAddress};
 pub use self::context::{ActorShutdown, Context};
 pub use self::manager::ActorManager;
-use std::fmt;
 
 pub mod address;
 mod context;
@@ -50,10 +49,23 @@ pub mod prelude {
 ///     type Result = MyResult;
 /// }
 /// ```
-pub trait Message: Send + 'static + fmt::Debug {
+pub trait Message: Send + 'static {
     /// The return type of the message. It will be returned when the [`Address::send`](address/struct.Address.html#method.send)
     /// method is called.
     type Result: Send;
+}
+
+pub(crate) trait MessageName {
+    fn name(&self) -> &'static str;
+}
+
+impl<M> MessageName for M
+where
+    M: Message,
+{
+    fn name(&self) -> &'static str {
+        std::any::type_name::<M>()
+    }
 }
 
 /// A trait indicating that an [`Actor`](trait.Actor.html) can handle a given [`Message`](trait.Message.html)

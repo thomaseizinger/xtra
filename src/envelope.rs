@@ -1,4 +1,3 @@
-use std::fmt;
 use std::marker::PhantomData;
 
 use catty::{Receiver, Sender};
@@ -6,7 +5,7 @@ use futures_core::future::BoxFuture;
 use futures_util::FutureExt;
 
 use crate::context::Context;
-use crate::{Actor, Handler, Message};
+use crate::{Actor, Handler, Message, MessageName};
 
 /// A message envelope is a struct that encapsulates a message and its return channel sender (if applicable).
 /// Firstly, this allows us to be generic over returning and non-returning messages (as all use the
@@ -14,7 +13,7 @@ use crate::{Actor, Handler, Message};
 /// allows us to erase the type of the message when this is in dyn Trait format, thereby being able to
 /// use only one channel to send all the kinds of messages that the actor can receives. This does,
 /// however, induce a bit of allocation (as envelopes have to be boxed).
-pub(crate) trait MessageEnvelope: Send + fmt::Debug {
+pub(crate) trait MessageEnvelope: Send + MessageName {
     /// The type of actor that this envelope carries a message for
     type Actor;
 
@@ -87,9 +86,9 @@ impl<A: Handler<M>, M: Message> MessageEnvelope for ReturningEnvelope<A, M> {
     }
 }
 
-impl<A, M: Message> fmt::Debug for ReturningEnvelope<A, M> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.message.fmt(f)
+impl<A: Handler<M>, M: Message> MessageName for ReturningEnvelope<A, M> {
+    fn name(&self) -> &'static str {
+        self.message.name()
     }
 }
 
@@ -121,12 +120,9 @@ impl<A: Handler<M>, M: Message> MessageEnvelope for NonReturningEnvelope<A, M> {
     }
 }
 
-impl<A, M: Message> fmt::Debug for NonReturningEnvelope<A, M>
-where
-    M: fmt::Debug,
-{
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.message.fmt(f)
+impl<A: Handler<M>, M: Message> MessageName for NonReturningEnvelope<A, M> {
+    fn name(&self) -> &'static str {
+        self.message.name()
     }
 }
 
