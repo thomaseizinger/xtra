@@ -101,7 +101,9 @@ impl<A: Actor> Context<A> {
         }
 
         loop {
-            match self.tick(self.receiver.receive().await, &mut actor).await {
+            let message = self.receiver.receive().await;
+
+            match self.tick(message, &mut actor).await {
                 ControlFlow::Continue(()) => {}
                 ControlFlow::Break(()) => {
                     return actor.stopped().await;
@@ -128,7 +130,8 @@ impl<A: Actor> Context<A> {
 
     /// Yields to the manager to handle one message.
     pub async fn yield_once(&mut self, act: &mut A) {
-        self.tick(self.receiver.receive().await, act).await;
+        let message = self.receiver.receive().await;
+        self.tick(message, act).await;
     }
 
     /// Joins on a future by handling all incoming messages whilst polling it. The future will
@@ -263,6 +266,7 @@ impl<A: Actor> Context<A> {
                         // TODO(?) should this be here? Preserves ordering but may increase time for
                         // this future to return
                         if let Some(msg) = next_msg.cancel() {
+                            drop(next_msg);
                             self.tick(msg, actor).await;
                         }
 

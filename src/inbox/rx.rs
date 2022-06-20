@@ -36,19 +36,15 @@ impl<A, Rc: RxRefCounter> Receiver<A, Rc> {
         })
     }
 
-    /// Clone this receiver, keeping its broadcast mailbox.
-    pub fn cloned_same_broadcast_mailbox(&self) -> Receiver<A, Rc> {
-        Receiver {
-            inner: self.inner.clone(),
-            broadcast_mailbox: self.broadcast_mailbox.clone(),
-            rc: self.rc.increment(&self.inner),
-        }
-    }
-
     /// Clone this receiver, giving the clone a new broadcast mailbox.
     pub fn cloned_new_broadcast_mailbox(&self) -> Receiver<A, Rc> {
         let new_mailbox = Arc::new(Spinlock::new(BinaryHeap::new()));
-        self.inner.chan.lock().unwrap().broadcast_queues.push(Arc::downgrade(&new_mailbox));
+        self.inner
+            .chan
+            .lock()
+            .unwrap()
+            .broadcast_queues
+            .push(Arc::downgrade(&new_mailbox));
 
         Receiver {
             inner: self.inner.clone(),
@@ -57,8 +53,8 @@ impl<A, Rc: RxRefCounter> Receiver<A, Rc> {
         }
     }
 
-    pub fn receive(&self) -> ReceiveFuture<A, Rc> {
-        ReceiveFuture::new(self.cloned_same_broadcast_mailbox())
+    pub fn receive(&mut self) -> ReceiveFuture<A, Rc> {
+        ReceiveFuture::new(self)
     }
 
     fn try_recv(&self) -> Result<ActorMessage<A>, Arc<Spinlock<WaitingReceiver<A>>>> {
@@ -113,24 +109,24 @@ impl<A, Rc: RxRefCounter> Drop for Receiver<A, Rc> {
 }
 
 #[must_use = "Futures do nothing unless polled"]
-pub struct ReceiveFuture<A, Rc: RxRefCounter>(ReceiveFutureInner<A, Rc>);
+pub struct ReceiveFuture<'a, A, Rc: RxRefCounter>(ReceiveFutureInner<'a, A, Rc>);
 
-impl<A, Rc: RxRefCounter> ReceiveFuture<A, Rc> {
-    fn new(rx: Receiver<A, Rc>) -> Self {
+impl<'a, A, Rc: RxRefCounter> ReceiveFuture<'a, A, Rc> {
+    fn new(rx: &'a mut Receiver<A, Rc>) -> Self {
         ReceiveFuture(ReceiveFutureInner::New(rx))
     }
 }
 
-enum ReceiveFutureInner<A, Rc: RxRefCounter> {
-    New(Receiver<A, Rc>),
+enum ReceiveFutureInner<'a, A, Rc: RxRefCounter> {
+    New(&'a mut Receiver<A, Rc>),
     Waiting {
-        rx: Receiver<A, Rc>,
+        rx: &'a mut Receiver<A, Rc>,
         waiting: Arc<Spinlock<WaitingReceiver<A>>>,
     },
     Complete,
 }
 
-impl<A, Rc: RxRefCounter> Future for ReceiveFuture<A, Rc> {
+impl<A, Rc: RxRefCounter> Future for ReceiveFuture<'_, A, Rc> {
     type Output = ActorMessage<A>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<ActorMessage<A>> {
@@ -169,12 +165,12 @@ impl<A, Rc: RxRefCounter> Future for ReceiveFuture<A, Rc> {
                                             return self.poll_unpin(cx);
                                         }
                                     }
-                                },
+                                }
                                 WakeReason::Shutdown => ActorMessage::Shutdown,
                                 WakeReason::Cancelled => {
                                     unreachable!("Waiting receive future cannot be interrupted")
                                 }
-                            })
+                            });
                         }
                         // Message has not been delivered - continue waiting
                         None => inner.waker = Some(cx.waker().clone()),
@@ -189,10 +185,8 @@ impl<A, Rc: RxRefCounter> Future for ReceiveFuture<A, Rc> {
     }
 }
 
-impl<A, Rc: RxRefCounter> ReceiveFuture<A, Rc> {
-    /// Cancel the receiving future, returning a message if it had been fulfilled with one, but had
-    /// not yet been polled after wakeup. Future calls to `Future::poll` will return `Poll::Pending`,
-    /// and `FusedFuture::is_terminated` will return `true`.
+impl<A, Rc: RxRefCounter> ReceiveFuture<'_, A, Rc> {
+    /// TODO(docs)
     ///
     /// This is important to do over `Drop`, as with `Drop` messages may be sent back into the
     /// channel and could be observed as received out of order, if multiple receives are concurrent
@@ -211,7 +205,7 @@ impl<A, Rc: RxRefCounter> ReceiveFuture<A, Rc> {
     }
 }
 
-impl<A, Rc: RxRefCounter> Drop for ReceiveFuture<A, Rc> {
+impl<A, Rc: RxRefCounter> Drop for ReceiveFuture<'_, A, Rc> {
     fn drop(&mut self) {
         if let ReceiveFutureInner::Waiting { waiting, rx } =
             mem::replace(&mut self.0, ReceiveFutureInner::Complete)
@@ -240,7 +234,7 @@ impl<A, Rc: RxRefCounter> Drop for ReceiveFuture<A, Rc> {
     }
 }
 
-impl<A, Rc: RxRefCounter> FusedFuture for ReceiveFuture<A, Rc> {
+impl<A, Rc: RxRefCounter> FusedFuture for ReceiveFuture<'_, A, Rc> {
     fn is_terminated(&self) -> bool {
         matches!(self.0, ReceiveFutureInner::Complete)
     }
