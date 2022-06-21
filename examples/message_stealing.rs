@@ -4,6 +4,7 @@
 use std::time::Duration;
 
 use xtra::prelude::*;
+use xtra::WeakAddress;
 
 struct Printer {
     times: usize,
@@ -34,7 +35,7 @@ struct Print(String);
 impl Handler<Print> for Printer {
     type Return = ();
 
-    async fn handle(&mut self, print: Print, ctx: &mut Context<Self>) {
+    async fn handle(&mut self, print: Print, this: WeakAddress<Self>, stop_handle: &mut StopHandle) {
         self.times += 1;
         println!(
             "Printing {} from printer {}. Printed {} times so far.",
@@ -43,7 +44,7 @@ impl Handler<Print> for Printer {
 
         if self.times == 10 {
             println!("Actor {} stopping!", self.id);
-            ctx.stop_all();
+            // ctx.stop_all(); TOOO
         }
     }
 }

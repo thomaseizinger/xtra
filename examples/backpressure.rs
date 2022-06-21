@@ -1,5 +1,6 @@
 use xtra::prelude::*;
 use xtra::spawn::TokioGlobalSpawnExt;
+use xtra::WeakAddress;
 
 struct Greeter;
 
@@ -16,7 +17,7 @@ struct Hello(String);
 impl Handler<Hello> for Greeter {
     type Return = ();
 
-    async fn handle(&mut self, Hello(name): Hello, _: &mut Context<Self>) -> Self::Return {
+    async fn handle(&mut self, Hello(name): Hello, this: WeakAddress<Self>, stop_handle: &mut StopHandle) {
         println!("Hello {}", name)
     }
 }

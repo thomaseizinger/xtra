@@ -80,6 +80,7 @@ impl<A, Rc: RefCounter> Address<A, Rc> {
     /// ```rust
     /// # use xtra::prelude::*;
     /// # use std::time::Duration;
+    /// use xtra::WeakAddress;
     /// # struct MyActor;
     /// # #[async_trait] impl Actor for MyActor {type Stop = (); async fn stopped(self) -> Self::Stop {} }
     /// struct Shutdown;
@@ -88,8 +89,8 @@ impl<A, Rc: RefCounter> Address<A, Rc> {
     /// impl Handler<Shutdown> for MyActor {
     ///     type Return = ();
     ///
-    ///     async fn handle(&mut self, _: Shutdown, ctx: &mut Context<Self>) {
-    ///         ctx.stop_all();
+    ///     async fn handle(&mut self, message: M, ctx: WeakAddress<Self::Actor>,stop_handle: &mut StopHandle)-> Self::Return {
+    ///         stop_handle.stop();
     ///     }
     /// }
     ///

@@ -3,6 +3,7 @@
 #![cfg_attr(docsrs, feature(doc_cfg, external_doc))]
 #![deny(unsafe_code, missing_docs)]
 
+use crate::context::StopHandle;
 pub use self::address::{Address, Disconnected, WeakAddress};
 pub use self::context::{ActorShutdown, Context};
 pub use self::manager::ActorManager;
@@ -31,6 +32,7 @@ pub mod tracing;
 pub mod prelude {
     pub use crate::address::Address;
     pub use crate::context::Context;
+    pub use crate::context::StopHandle;
     pub use crate::message_channel::{MessageChannel, StrongMessageChannel, WeakMessageChannel};
     #[cfg(feature = "with-tracing-0_1")]
     pub use crate::tracing::InstrumentedExt;
@@ -66,8 +68,9 @@ pub mod refcount {
 /// impl Handler<Msg> for MyActor {
 ///     type Return = u32;
 ///
-///     async fn handle(&mut self, message: Msg, ctx: &mut Context<Self>) -> u32 {
-///         20
+///     async fn handle(&mut self, message: M, ctx: /// WeakAddress<Self::Actor>,stop_handle: &mut StopHandle)-> Self::Return  {
+///         use xtra::WeakAddress;
+/// 20
 ///     }
 /// }
 ///
@@ -88,7 +91,7 @@ pub trait Handler<M>: Actor {
     ///
     /// This is an [`async_trait`](https://docs.rs/async-trait).
     /// See the trait documentation to see an example of how this method can be declared.
-    async fn handle(&mut self, message: M, ctx: &mut Context<Self>) -> Self::Return;
+    async fn handle(&mut self, message: M, this: WeakAddress<Self>, stop_handle: &mut StopHandle) -> Self::Return;
 }
 
 /// An actor which can handle [`Message`s](trait.Message.html) one at a time. Actors can only be
@@ -103,7 +106,7 @@ pub trait Handler<M>: Actor {
 /// # Example
 ///
 /// ```rust
-/// # use xtra::{KeepRunning, prelude::*};
+/// # use xtra::{KeepRunning, prelude::*, WeakAddress};
 /// # use std::time::Duration;
 /// struct MyActor;
 ///
@@ -125,9 +128,9 @@ pub trait Handler<M>: Actor {
 /// impl Handler<Goodbye> for MyActor {
 ///     type Return = ();
 ///
-///     async fn handle(&mut self, _: Goodbye, ctx: &mut Context<Self>) {
+///     async fn handle(&mut self, message: M, ctx: WeakAddress<Self::Actor>,stop_handle: &mut StopHandle)-> Self::Return {
 ///         println!("Goodbye!");
-///         ctx.stop_all();
+///         stop_handle.stop();
 ///     }
 /// }
 ///

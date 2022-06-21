@@ -1,5 +1,6 @@
-use crate::Handler;
+use crate::{Context, Handler};
 use tracing::{Instrument, Span};
+use crate::context::StopHandle;
 
 /// Instrument a message with `tracing`. This will attach the message handler span to the given
 /// `parent` span. If `IS_CHILD` is true, the message handler span will be instrumented with the
@@ -35,27 +36,29 @@ impl<M> InstrumentedExt for M {
     }
 }
 
-#[async_trait::async_trait]
-impl<A, M, const IS_CHILD: bool> Handler<Instrumented<M, IS_CHILD>> for A
-where
-    A: Handler<M> + Send,
-    M: Send + 'static,
-{
-    type Return = <A as Handler<M>>::Return;
-
-    async fn handle(
-        &mut self,
-        message: Instrumented<M, IS_CHILD>,
-        ctx: &mut crate::Context<Self>,
-    ) -> Self::Return {
-        if IS_CHILD {
-            self.handle(message.msg, ctx)
-                .instrument(message.parent)
-                .await
-        } else {
-            let span = Span::current();
-            span.follows_from(message.parent);
-            self.handle(message.msg, ctx).instrument(span).await
-        }
-    }
-}
+// TODO
+// #[async_trait::async_trait]
+// impl<A, M, const IS_CHILD: bool> Handler<Instrumented<M, IS_CHILD>> for A
+// where
+//     A: Handler<M> + Send,
+//     M: Send + 'static,
+// {
+//     type Return = <A as Handler<M>>::Return;
+//
+//     async fn handle(
+//         &mut self,
+//         message: M,
+//         ctx: &mut Context<Self>,
+//         stop_handle: &mut StopHandle,
+//     ) -> Self::Return {
+//         if IS_CHILD {
+//             self.handle(message.msg, ctx, )
+//                 .instrument(message.parent)
+//                 .await
+//         } else {
+//             let span = Span::current();
+//             span.follows_from(message.parent);
+//             self.handle(message.msg, ctx, ).instrument(span).await
+//         }
+//     }
+// }

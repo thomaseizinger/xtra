@@ -2,6 +2,7 @@ use wasm_bindgen::{prelude::*, JsValue};
 
 use xtra::prelude::*;
 use xtra::spawn::WasmBindgen;
+use xtra::WeakAddress;
 
 struct Echoer;
 
@@ -18,8 +19,8 @@ struct Echo(String);
 impl Handler<Echo> for Echoer {
     type Return = String;
 
-    async fn handle(&mut self, echo: Echo, _ctx: &mut Context<Self>) -> String {
-        echo.0
+    async fn handle(&mut self, message: M, ctx: WeakAddress<Self::Actor>, stop_handle: &mut StopHandle) -> Self::Return {
+        message.0
     }
 }
 

@@ -1,7 +1,8 @@
 use async_trait::async_trait;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use tokio::runtime::Runtime;
-use xtra::{Actor, Context, Handler};
+use xtra::prelude::*;
+use xtra::WeakAddress;
 
 struct Counter(u64);
 
@@ -18,7 +19,7 @@ struct Finish;
 impl Handler<IncrementZst> for Counter {
     type Return = ();
 
-    async fn handle(&mut self, _: IncrementZst, _ctx: &mut Context<Self>) {
+    async fn handle(&mut self, _: IncrementZst, this: WeakAddress<Self>, stop_handle: &mut StopHandle) -> Self::Return {
         self.0 += 1;
     }
 }
@@ -27,7 +28,7 @@ impl Handler<IncrementZst> for Counter {
 impl Handler<Finish> for Counter {
     type Return = u64;
 
-    async fn handle(&mut self, _: Finish, _ctx: &mut Context<Self>) -> u64 {
+    async fn handle(&mut self, _: Finish, this: WeakAddress<Self>, stop_handle: &mut StopHandle) -> Self::Return {
         self.0
     }
 }

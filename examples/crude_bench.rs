@@ -4,7 +4,7 @@ use std::future::Future;
 use std::time::{Duration, Instant};
 use xtra::prelude::*;
 use xtra::spawn::Tokio;
-use xtra::NameableSending;
+use xtra::{NameableSending, WeakAddress};
 use xtra::Receiver;
 use xtra::SendFuture;
 
@@ -27,7 +27,7 @@ struct GetCount;
 impl Handler<Increment> for Counter {
     type Return = ();
 
-    async fn handle(&mut self, _: Increment, _ctx: &mut Context<Self>) {
+    async fn handle(&mut self, _: Increment, this: WeakAddress<Self>, stop_handle: &mut StopHandle) -> Self::Return {
         self.count += 1;
     }
 }
@@ -36,7 +36,7 @@ impl Handler<Increment> for Counter {
 impl Handler<IncrementWithData> for Counter {
     type Return = ();
 
-    async fn handle(&mut self, _: IncrementWithData, _ctx: &mut Context<Self>) {
+    async fn handle(&mut self, _: IncrementWithData, this: WeakAddress<Self>, stop_handle: &mut StopHandle) -> Self::Return {
         self.count += 1;
     }
 }
@@ -45,7 +45,7 @@ impl Handler<IncrementWithData> for Counter {
 impl Handler<GetCount> for Counter {
     type Return = usize;
 
-    async fn handle(&mut self, _: GetCount, _ctx: &mut Context<Self>) -> usize {
+    async fn handle(&mut self, _: GetCount, this: WeakAddress<Self>, stop_handle: &mut StopHandle) -> Self::Return {
         let count = self.count;
         self.count = 0;
         count
@@ -69,7 +69,7 @@ struct GetTime;
 impl Handler<GetTime> for SendTimer {
     type Return = Duration;
 
-    async fn handle(&mut self, _time: GetTime, _ctx: &mut Context<Self>) -> Duration {
+    async fn handle(&mut self, _time: GetTime, this: WeakAddress<Self>, stop_handle: &mut StopHandle) -> Self::Return {
         self.time
     }
 }
@@ -89,7 +89,7 @@ struct TimeReturn;
 impl Handler<TimeReturn> for ReturnTimer {
     type Return = Instant;
 
-    async fn handle(&mut self, _time: TimeReturn, _ctx: &mut Context<Self>) -> Instant {
+    async fn handle(&mut self, _time: TimeReturn, this: WeakAddress<Self>, stop_handle: &mut StopHandle) -> Self::Return {
         Instant::now()
     }
 }

@@ -1,6 +1,7 @@
 use futures_util::future;
 use xtra::prelude::*;
 use xtra::spawn::Tokio;
+use xtra::WeakAddress;
 
 struct MyActor;
 
@@ -17,8 +18,8 @@ struct Print(String);
 impl Handler<Print> for MyActor {
     type Return = ();
 
-    async fn handle(&mut self, print: Print, _ctx: &mut Context<Self>) {
-        println!("Printing {}", print.0);
+    async fn handle(&mut self, message: M, ctx: WeakAddress<Self::Actor>, stop_handle: &mut StopHandle) -> Self::Return {
+        println!("Printing {}", message.0);
     }
 }
 

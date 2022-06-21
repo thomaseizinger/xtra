@@ -280,6 +280,7 @@ mod test {
     use crate::envelope::BroadcastEnvelopeConcrete;
     use crate::prelude::{Context, *};
     use futures_util::FutureExt;
+    use crate::WeakAddress;
 
     struct MyActor;
 
@@ -294,7 +295,7 @@ mod test {
     impl Handler<&'static str> for MyActor {
         type Return = ();
 
-        async fn handle(&mut self, message: &'static str, _ctx: &mut Context<Self>) {
+        async fn handle(&mut self, message: &'static str, this: WeakAddress<Self>, stop_handle: &mut StopHandle) -> Self::Return {
             println!("{}", message);
         }
     }

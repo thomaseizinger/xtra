@@ -2,6 +2,7 @@ use futures_util::stream::repeat;
 use futures_util::StreamExt;
 use xtra::prelude::*;
 use xtra::spawn::Tokio;
+use xtra::WeakAddress;
 
 #[derive(Default)]
 struct Accumulator {
@@ -23,7 +24,7 @@ struct GetSum;
 impl Handler<Add> for Accumulator {
     type Return = ();
 
-    async fn handle(&mut self, Add(number): Add, _ctx: &mut Context<Self>) {
+    async fn handle(&mut self, Add(number): Add, this: WeakAddress<Self>, stop_handle: &mut StopHandle) {
         self.sum += number;
     }
 }
@@ -32,7 +33,7 @@ impl Handler<Add> for Accumulator {
 impl Handler<GetSum> for Accumulator {
     type Return = u32;
 
-    async fn handle(&mut self, _: GetSum, _ctx: &mut Context<Self>) -> Self::Return {
+    async fn handle(&mut self, _: GetSum, this: WeakAddress<Self>, stop_handle: &mut StopHandle) -> Self::Return {
         self.sum
     }
 }

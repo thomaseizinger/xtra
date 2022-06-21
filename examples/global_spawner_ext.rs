@@ -1,5 +1,6 @@
 use xtra::prelude::*;
 use xtra::spawn::SmolGlobalSpawnExt;
+use xtra::WeakAddress;
 
 struct Printer {
     times: usize,
@@ -24,7 +25,7 @@ struct Print(String);
 impl Handler<Print> for Printer {
     type Return = ();
 
-    async fn handle(&mut self, print: Print, _ctx: &mut Context<Self>) {
+    async fn handle(&mut self, print: Print, this: WeakAddress<Self>, stop_handle: &mut StopHandle) {
         self.times += 1;
         println!("Printing {}. Printed {} times so far.", print.0, self.times);
     }

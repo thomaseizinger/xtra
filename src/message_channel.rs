@@ -48,8 +48,9 @@ use futures_core::stream::BoxStream;
 /// impl Handler<WhatsYourName> for Alice {
 ///     type Return = &'static str;
 ///
-///     async fn handle(&mut self, _: WhatsYourName, _ctx: &mut Context<Self>) -> Self::Return {
-///         "Alice"
+///     async fn handle(&mut self, message: M, ctx: /// WeakAddress<Self::Actor>,stop_handle: &mut StopHandle) -> Self::Return {
+///         use xtra::WeakAddress;
+/// "Alice"
 ///     }
 /// }
 ///
@@ -57,8 +58,9 @@ use futures_core::stream::BoxStream;
 /// impl Handler<WhatsYourName> for Bob {
 ///     type Return = &'static str;
 ///
-///     async fn handle(&mut self, _: WhatsYourName, _ctx: &mut Context<Self>) -> Self::Return {
-///         "Bob"
+///     async fn handle(&mut self, message: M, ctx: /// WeakAddress<Self::Actor>,stop_handle: &mut StopHandle) -> Self::Return {
+///         use xtra::WeakAddress;
+/// "Bob"
 ///     }
 /// }
 ///

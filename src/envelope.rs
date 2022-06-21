@@ -7,7 +7,7 @@ use futures_util::FutureExt;
 
 use crate::context::Context;
 use crate::inbox::{HasPriority, Priority};
-use crate::{Actor, Handler};
+use crate::{Actor, ActorShutdown, Handler, StopHandle, WeakAddress};
 
 /// A message envelope is a struct that encapsulates a message and its return channel sender (if applicable).
 /// Firstly, this allows us to be generic over returning and non-returning messages (as all use the
@@ -44,8 +44,8 @@ pub trait MessageEnvelope: Send {
     fn handle<'a>(
         self: Box<Self>,
         act: &'a mut Self::Actor,
-        ctx: &'a mut Context<Self::Actor>,
-    ) -> BoxFuture<'a, ()>;
+        address: WeakAddress<Self::Actor>,
+    ) -> BoxFuture<'a, Result<(), ActorShutdown>>;
 }
 
 /// An envelope that returns a result from a message. Constructed by the `AddressExt::do_send` method.
@@ -68,25 +68,34 @@ impl<A: Actor, M, R: Send + 'static> ReturningEnvelope<A, M, R> {
     }
 }
 
-impl<A: Handler<M, Return = R>, M: Send + 'static, R: Send + 'static> MessageEnvelope
-    for ReturningEnvelope<A, M, R>
+impl<A: Handler<M, Return=R>, M: Send + 'static, R: Send + 'static> MessageEnvelope
+for ReturningEnvelope<A, M, R>
 {
     type Actor = A;
 
     fn handle<'a>(
         self: Box<Self>,
         act: &'a mut Self::Actor,
-        ctx: &'a mut Context<Self::Actor>,
-    ) -> BoxFuture<'a, ()> {
+        address: WeakAddress<Self::Actor>,
+    ) -> BoxFuture<'a, Result<(), ActorShutdown>> {
         let Self {
             message,
             result_sender,
             ..
         } = *self;
-        Box::pin(act.handle(message, ctx).map(move |r| {
+        Box::pin(async move {
+            let mut handle = StopHandle::new();
+            let result = act.handle(message, address, &mut handle).await;
+
             // We don't actually care if the receiver is listening
-            let _ = result_sender.send(r);
-        }))
+            let _ = result_sender.send(result);
+
+            if handle.stop_requested() {
+                Err(ActorShutdown)
+            } else {
+                Ok(())
+            }
+        })
     }
 }
 
@@ -106,21 +115,30 @@ impl<A: Actor, M> NonReturningEnvelope<A, M> {
     }
 }
 
-impl<A: Handler<M>, M: Send + 'static> MessageEnvelope for NonReturningEnvelope<A, M> {
+impl<A, M> MessageEnvelope for NonReturningEnvelope<A, M> where A: Handler<M, Return=()>, M: Send + 'static {
     type Actor = A;
 
     fn handle<'a>(
         self: Box<Self>,
         act: &'a mut Self::Actor,
-        ctx: &'a mut Context<Self::Actor>,
-    ) -> BoxFuture<'a, ()> {
-        Box::pin(act.handle(self.message, ctx).map(|_| ()))
+        address: WeakAddress<Self::Actor>,
+    ) -> BoxFuture<'a, Result<(), ActorShutdown>> {
+        Box::pin(async move {
+            let mut handle = StopHandle::new();
+            act.handle(self.message, address, &mut handle).await;
+
+            if handle.stop_requested() {
+                Err(ActorShutdown)
+            } else {
+                Ok(())
+            }
+        })
     }
 }
 
 /// Like MessageEnvelope, but can be cloned.
 pub trait BroadcastMessageEnvelope: MessageEnvelope + Sync {
-    fn clone(&self) -> Box<dyn BroadcastMessageEnvelope<Actor = Self::Actor>>;
+    fn clone(&self) -> Box<dyn BroadcastMessageEnvelope<Actor=Self::Actor>>;
 }
 
 /// Like MessageEnvelope, but with an Arc instead of Box
@@ -130,8 +148,8 @@ pub trait BroadcastEnvelope: HasPriority + Send + Sync {
     fn handle<'a>(
         self: Arc<Self>,
         act: &'a mut Self::Actor,
-        ctx: &'a mut Context<Self::Actor>,
-    ) -> BoxFuture<'a, ()>;
+        address: WeakAddress<Self::Actor>,
+    ) -> BoxFuture<'a, Result<(), ActorShutdown>>;
 }
 
 pub struct BroadcastEnvelopeConcrete<A, M> {
@@ -151,18 +169,27 @@ impl<A: Actor, M> BroadcastEnvelopeConcrete<A, M> {
 }
 
 impl<A: Handler<M>, M> BroadcastEnvelope for BroadcastEnvelopeConcrete<A, M>
-where
-    A: Handler<M, Return = ()>,
-    M: Clone + Send + Sync + 'static,
+    where
+        A: Handler<M, Return=()>,
+        M: Clone + Send + Sync + 'static,
 {
     type Actor = A;
 
     fn handle<'a>(
         self: Arc<Self>,
         act: &'a mut Self::Actor,
-        ctx: &'a mut Context<Self::Actor>,
-    ) -> BoxFuture<'a, ()> {
-        Box::pin(act.handle(self.message.clone(), ctx))
+        this: WeakAddress<Self::Actor>,
+    ) -> BoxFuture<'a, Result<(), ActorShutdown>> {
+        Box::pin(async move {
+            let mut handle = StopHandle::new();
+            act.handle(self.message.clone(), this, &mut handle).await;
+
+            if handle.stop_requested() {
+                Err(ActorShutdown)
+            } else {
+                Ok(())
+            }
+        })
     }
 }
 

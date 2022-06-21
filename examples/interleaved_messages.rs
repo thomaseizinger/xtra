@@ -1,5 +1,6 @@
 use xtra::prelude::*;
 use xtra::spawn::Smol;
+use xtra::WeakAddress;
 
 struct Initialized(Address<ActorA>);
 
@@ -20,10 +21,12 @@ impl Actor for ActorA {
 impl Handler<Hello> for ActorA {
     type Return = ();
 
-    async fn handle(&mut self, _: Hello, ctx: &mut Context<Self>) {
+    async fn handle(&mut self, _: Hello, this: WeakAddress<Self>, stop_handle: &mut StopHandle) -> Self::Return {
         println!("ActorA: Hello");
         let fut = self.actor_b.send(Hello);
-        ctx.join(self, fut).await.unwrap();
+        // ctx.join(self, fut).await.unwrap();
+
+        todo!()
     }
 }
 
@@ -40,10 +43,12 @@ impl Actor for ActorB {
 impl Handler<Initialized> for ActorB {
     type Return = ();
 
-    async fn handle(&mut self, m: Initialized, ctx: &mut Context<Self>) {
+    async fn handle(&mut self, m: Initialized, this: WeakAddress<Self>, stop_handle: &mut StopHandle) -> Self::Return {
         println!("ActorB: Initialized");
         let actor_a = m.0;
-        ctx.join(self, actor_a.send(Hello)).await.unwrap();
+        // ctx.join(self, actor_a.send(Hello)).await.unwrap();
+
+        todo!()
     }
 }
 
@@ -51,7 +56,7 @@ impl Handler<Initialized> for ActorB {
 impl Handler<Hello> for ActorB {
     type Return = ();
 
-    async fn handle(&mut self, _: Hello, _: &mut Context<Self>) {
+    async fn handle(&mut self, _: Hello, this: WeakAddress<Self>, stop_handle: &mut StopHandle) -> Self::Return {
         println!("ActorB: Hello");
     }
 }

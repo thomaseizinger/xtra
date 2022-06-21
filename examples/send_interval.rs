@@ -4,7 +4,7 @@ use futures_util::StreamExt;
 use std::time::Duration;
 use xtra::prelude::*;
 use xtra::spawn::Tokio;
-use xtra::Disconnected;
+use xtra::{Disconnected, WeakAddress};
 
 #[derive(Default)]
 struct Greeter;
@@ -22,7 +22,7 @@ struct Greet;
 impl Handler<Greet> for Greeter {
     type Return = ();
 
-    async fn handle(&mut self, _: Greet, _ctx: &mut Context<Self>) {
+    async fn handle(&mut self, _: Greet, this: WeakAddress<Self>, stop_handle: &mut StopHandle) -> Self::Return {
         println!("Hello!");
     }
 }

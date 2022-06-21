@@ -8,7 +8,7 @@ use std::task::Poll;
 use std::time::Duration;
 use xtra::prelude::*;
 use xtra::spawn::TokioGlobalSpawnExt;
-use xtra::KeepRunning;
+use xtra::{KeepRunning, WeakAddress};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct Accumulator(usize);
@@ -30,7 +30,7 @@ struct Report;
 impl Handler<Inc> for Accumulator {
     type Return = ();
 
-    async fn handle(&mut self, _: Inc, _ctx: &mut Context<Self>) {
+    async fn handle(&mut self, _: Inc, this: WeakAddress<Self>, stop_handle: &mut StopHandle) -> Self::Return {
         self.0 += 1;
     }
 }
@@ -39,7 +39,7 @@ impl Handler<Inc> for Accumulator {
 impl Handler<Report> for Accumulator {
     type Return = Self;
 
-    async fn handle(&mut self, _: Report, _ctx: &mut Context<Self>) -> Self {
+    async fn handle(&mut self, _: Report, this: WeakAddress<Self>, stop_handle: &mut StopHandle) -> Self::Return {
         self.clone()
     }
 }
@@ -48,8 +48,9 @@ impl Handler<Report> for Accumulator {
 impl Handler<StopAll> for Accumulator {
     type Return = ();
 
-    async fn handle(&mut self, _: StopAll, ctx: &mut Context<Self>) -> Self::Return {
-        ctx.stop_all();
+    async fn handle(&mut self, _: StopAll, this: WeakAddress<Self>, stop_handle: &mut StopHandle) -> Self::Return {
+        // ctx.stop_all();
+        todo!()
     }
 }
 
@@ -57,8 +58,8 @@ impl Handler<StopAll> for Accumulator {
 impl Handler<StopSelf> for Accumulator {
     type Return = ();
 
-    async fn handle(&mut self, _: StopSelf, ctx: &mut Context<Self>) {
-        ctx.stop_self();
+    async fn handle(&mut self, _: StopSelf, this: WeakAddress<Self>, stop_handle: &mut StopHandle) -> Self::Return {
+        stop_handle.stop();
     }
 }
 
@@ -97,8 +98,10 @@ struct StopSelf;
 impl Handler<StopSelf> for DropTester {
     type Return = ();
 
-    async fn handle(&mut self, _: StopSelf, ctx: &mut Context<Self>) {
-        ctx.stop_all();
+    async fn handle(&mut self, _: StopSelf, this: WeakAddress<Self>, stop_handle: &mut StopHandle) -> Self::Return {
+        // stop_handle.stop_all();
+
+        todo!()
     }
 }
 
@@ -216,7 +219,7 @@ impl Actor for StreamCancelTester {
 impl Handler<StreamCancelMessage> for StreamCancelTester {
     type Return = KeepRunning;
 
-    async fn handle(&mut self, _: StreamCancelMessage, _: &mut Context<Self>) -> KeepRunning {
+    async fn handle(&mut self, _: StreamCancelMessage, this: WeakAddress<Self>, stop_handle: &mut StopHandle) -> Self::Return {
         KeepRunning::Yes
     }
 }
@@ -295,8 +298,8 @@ impl Actor for ActorStopSelf {
 impl Handler<StopSelf> for ActorStopSelf {
     type Return = ();
 
-    async fn handle(&mut self, _: StopSelf, ctx: &mut Context<Self>) {
-        ctx.stop_self();
+    async fn handle(&mut self, _: StopSelf, this: WeakAddress<Self>, stop_handle: &mut StopHandle) -> Self::Return {
+        stop_handle.stop();
     }
 }
 
@@ -313,7 +316,7 @@ impl Actor for LongRunningHandler {
 impl Handler<Duration> for LongRunningHandler {
     type Return = ();
 
-    async fn handle(&mut self, duration: Duration, _: &mut Context<Self>) -> Self::Return {
+    async fn handle(&mut self, duration: Duration, this: WeakAddress<Self>, stop_handle: &mut StopHandle) -> Self::Return {
         tokio::time::sleep(duration).await
     }
 }
@@ -358,7 +361,7 @@ struct Hello(&'static str);
 impl Handler<Hello> for Greeter {
     type Return = String;
 
-    async fn handle(&mut self, Hello(name): Hello, _: &mut Context<Self>) -> Self::Return {
+    async fn handle(&mut self, Hello(name): Hello, this: WeakAddress<Self>, stop_handle: &mut StopHandle) -> Self::Return {
         format!("Hello {}", name)
     }
 }
@@ -485,7 +488,7 @@ impl Actor for StopInStarted {
     type Stop = ();
 
     async fn started(&mut self, ctx: &mut Context<Self>) {
-        ctx.stop_self();
+        todo!()
     }
 
     async fn stopped(self) -> Self::Stop {}
@@ -524,7 +527,8 @@ impl Actor for InstantShutdownAll {
 
     async fn started(&mut self, ctx: &mut Context<Self>) {
         if self.stop_all {
-            ctx.stop_all();
+            // ctx.stop_all();
+            todo!()
         }
     }
 

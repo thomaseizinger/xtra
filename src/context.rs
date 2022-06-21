@@ -2,7 +2,7 @@ use crate::inbox::{rx::RxStrong, ActorMessage};
 use crate::{inbox, Actor, Address, Handler};
 use futures_util::future::{self, Either};
 use std::fmt;
-use std::fmt::{Display, Formatter};
+use std::fmt::{Display, Error, Formatter};
 use std::future::Future;
 use std::ops::ControlFlow;
 #[cfg(feature = "timing")]
@@ -14,10 +14,29 @@ use {futures_timer::Delay, std::time::Duration};
 /// closed**, as more actors that could still then be added to the address, so closing early, while
 /// maybe intuitive, would be subtly wrong.
 pub struct Context<A> {
-    /// Whether the actor is running. It is changed by the `stop` method as a flag to the `ActorManager`
-    /// for it to call the `stopping` method on the actor
-    running: bool,
     receiver: inbox::Receiver<A, RxStrong>,
+}
+
+/// TODO
+pub struct StopHandle {
+    stop_requested: bool,
+}
+
+impl StopHandle {
+    pub(crate) fn new() -> Self {
+        Self {
+            stop_requested: false
+        }
+    }
+
+    pub(crate) fn stop_requested(&self) -> bool {
+        self.stop_requested
+    }
+
+    /// TODO
+    pub fn stop(&mut self) {
+        self.stop_requested = true;
+    }
 }
 
 impl<A: Actor> Context<A> {
@@ -51,7 +70,6 @@ impl<A: Actor> Context<A> {
         let (tx, rx) = inbox::new(message_cap);
 
         let context = Context {
-            running: true,
             receiver: rx,
         };
 
@@ -60,28 +78,22 @@ impl<A: Actor> Context<A> {
 
     /// Attaches an actor of the same type listening to the same address as this actor is.
     /// They will operate in a message-stealing fashion, with no message handled by two actors.
-    pub fn attach(&mut self, actor: A) -> impl Future<Output = A::Stop> {
+    pub fn attach(&mut self, actor: A) -> impl Future<Output=A::Stop> {
         let ctx = Context {
-            running: true,
             receiver: self.receiver.cloned_new_broadcast_mailbox(),
         };
         ctx.run(actor)
     }
 
-    /// Stop this actor as soon as it has finished processing current message. This means that the
-    /// [`Actor::stopped`] method will be called.
-    pub fn stop_self(&mut self) {
-        self.running = false;
-    }
-
-    /// Stop all actors on this address. This is similar to [`Context::stop_self`] but it will stop
-    /// all actors on this address.
-    pub fn stop_all(&mut self) {
-        // We only need to shut down if there are still any strong senders left
-        if let Some(sender) = self.receiver.sender() {
-            sender.shutdown_and_drain();
-        }
-    }
+    // TODO: Move this onto `inbox::Sender` or `Address`
+    // /// Stop all actors on this address. This is similar to [`Context::stop_self`] but it will stop
+    // /// all actors on this address.
+    // pub fn stop_all(&mut self) {
+    //     // We only need to shut down if there are still any strong senders left
+    //     if let Some(sender) = self.receiver.sender() {
+    //         sender.shutdown_and_drain();
+    //     }
+    // }
 
     /// Get an address to the current actor if there are still external addresses to the actor.
     pub fn address(&self) -> Result<Address<A>, ActorShutdown> {
@@ -92,16 +104,17 @@ impl<A: Actor> Context<A> {
     pub async fn run(mut self, mut actor: A) -> A::Stop {
         actor.started(&mut self).await;
 
-        // Idk why anyone would do this, but we have to check that they didn't already stop the actor
-        // in the started method, otherwise it would kinda be a bug
-        if !self.running {
-            return actor.stopped().await;
-        }
+        // TODO: Fix this by returning `Result` from `started`.
+        // // Idk why anyone would do this, but we have to check that they didn't already stop the actor
+        // // in the started method, otherwise it would kinda be a bug
+        // if !self.running {
+        //     return actor.stopped().await;
+        // }
 
         loop {
             match self.tick(self.receiver.receive().await, &mut actor).await {
-                ControlFlow::Continue(()) => {}
-                ControlFlow::Break(()) => {
+                Ok(()) => {}
+                Err(_) => {
                     return actor.stopped().await;
                 }
             }
@@ -110,18 +123,17 @@ impl<A: Actor> Context<A> {
 
     /// Handle a message and immediate notifications, returning whether to exit from the manage loop
     /// or not.
-    async fn tick(&mut self, msg: ActorMessage<A>, actor: &mut A) -> ControlFlow<()> {
+    async fn tick(&mut self, msg: ActorMessage<A>, actor: &mut A) -> Result<(), ActorShutdown> {
+        let this = self.address()?.downgrade();
+
+        // TODO: All this could be encapsulated within the `ActorMessage` type and make it opqaue and thus easily publicly exportable.
         match msg {
-            ActorMessage::ToAllActors(msg) => msg.handle(actor, self).await,
-            ActorMessage::Shutdown => self.running = false,
-            ActorMessage::ToOneActor(msg) => msg.handle(actor, self).await,
-        }
+            ActorMessage::ToAllActors(msg) => msg.handle(actor, this).await?,
+            ActorMessage::Shutdown => return Err(ActorShutdown),
+            ActorMessage::ToOneActor(msg) => msg.handle(actor, this).await?,
+        };
 
-        if !self.running {
-            return ControlFlow::Break(());
-        }
-
-        ControlFlow::Continue(())
+        Ok(())
     }
 
     /// Yields to the manager to handle one message.
@@ -143,6 +155,7 @@ impl<A: Actor> Context<A> {
     /// use futures_util::FutureExt;
     /// # use xtra::prelude::*;
     /// # use smol::future;
+    /// use xtra::WeakAddress;
     /// # struct MyActor;
     /// # #[async_trait] impl Actor for MyActor { type Stop = (); async fn stopped(self) {} }
     ///
@@ -153,7 +166,7 @@ impl<A: Actor> Context<A> {
     /// impl Handler<Stop> for MyActor {
     ///     type Return = ();
     ///
-    ///     async fn handle(&mut self, _msg: Stop, ctx: &mut Context<Self>) {
+    ///     async fn handle(&mut self, message: M, ctx: WeakAddress<Self::Actor>,stop_handle: &mut StopHandle)-> Self::Return {
     ///         ctx.stop_self();
     ///     }
     /// }
@@ -162,7 +175,7 @@ impl<A: Actor> Context<A> {
     /// impl Handler<Joining> for MyActor {
     ///     type Return = bool;
     ///
-    ///     async fn handle(&mut self, _msg: Joining, ctx: &mut Context<Self>) -> bool {
+    ///     async fn handle(&mut self, message: M, ctx: WeakAddress<Self::Actor>,stop_handle: &mut StopHandle)-> Self::Return  {
     ///         let addr = ctx.address().unwrap();
     ///         let join = ctx.join(self, future::ready::<()>(()));
     ///         let _ = addr.send(Stop).split_receiver().await;
@@ -182,8 +195,8 @@ impl<A: Actor> Context<A> {
     #[cfg_attr(docsrs, doc(include = "../examples/interleaved_messages.rs"))]
     #[cfg_attr(docsrs, doc("```"))]
     pub async fn join<F, R>(&mut self, actor: &mut A, fut: F) -> R
-    where
-        F: Future<Output = R>,
+        where
+            F: Future<Output=R>,
     {
         futures_util::pin_mut!(fut);
         match self.select(actor, fut).await {
@@ -205,6 +218,7 @@ impl<A: Actor> Context<A> {
     /// use futures_util::future::Either;
     /// # use xtra::prelude::*;
     /// # use smol::future;
+    /// use xtra::WeakAddress;
     /// # struct MyActor;
     /// # #[async_trait] impl Actor for MyActor { type Stop = (); async fn stopped(self) {} }
     ///
@@ -215,7 +229,7 @@ impl<A: Actor> Context<A> {
     /// impl Handler<Stop> for MyActor {
     ///     type Return = ();
     ///
-    ///     async fn handle(&mut self, _msg: Stop, ctx: &mut Context<Self>) {
+    ///     async fn handle(&mut self, message: M, ctx: WeakAddress<Self::Actor>,stop_handle: &mut StopHandle)-> Self::Return {
     ///         ctx.stop_self();
     ///     }
     /// }
@@ -224,7 +238,7 @@ impl<A: Actor> Context<A> {
     /// impl Handler<Selecting> for MyActor {
     ///     type Return = bool;
     ///
-    ///     async fn handle(&mut self, _msg: Selecting, ctx: &mut Context<Self>) -> bool {
+    ///     async fn handle(&mut self, message: M, ctx: WeakAddress<Self::Actor>,stop_handle: &mut StopHandle)-> Self::Return  {
     ///         // Actor is still running, so this will return Either::Left
     ///         match ctx.select(self, future::ready(1)).await {
     ///             Either::Left(ans) => println!("Answer is: {}", ans),
@@ -250,31 +264,36 @@ impl<A: Actor> Context<A> {
     ///
     /// ```
     pub async fn select<F, R>(&mut self, actor: &mut A, mut fut: F) -> Either<R, F>
-    where
-        F: Future<Output = R> + Unpin,
+        where
+            F: Future<Output=R> + Unpin,
     {
-        while self.running {
-            let (msg, unfinished) = {
-                let mut next_msg = self.receiver.receive();
-                match future::select(fut, &mut next_msg).await {
-                    Either::Left((future_res, _)) => {
-                        // TODO(?) should this be here? Preserves ordering but may increase time for
-                        // this future to return
-                        if let Some(msg) = next_msg.cancel() {
-                            self.tick(msg, actor).await;
-                        }
-
-                        return Either::Left(future_res);
-                    }
-                    Either::Right(tuple) => tuple,
-                }
-            };
-
-            self.tick(msg, actor).await;
-            fut = unfinished;
-        }
-
-        Either::Right(fut)
+        todo!()
+        // loop {
+        //     let (msg, unfinished) = {
+        //         let mut next_msg = self.receiver.receive();
+        //         match future::select(fut, &mut next_msg).await {
+        //             Either::Left((future_res, )) => {
+        //                 // TODO(?) should this be here? Preserves ordering but may increase time for
+        //                 // this future to return
+        //                 if let Some(msg) = next_msg.cancel() {
+        //                     if let ControlFlow::Break(()) = self.tick(msg, actor).await {
+        //                         break;
+        //                     }
+        //                 }
+        //
+        //                 return Either::Left(future_res);
+        //             }
+        //             Either::Right(tuple) => tuple,
+        //         }
+        //     };
+        //
+        //     fut = unfinished;
+        //     if let ControlFlow::Break(()) = self.tick(msg, actor).await {
+        //         break fut;
+        //     }
+        // }
+        //
+        // Either::Right(fut)
     }
 
     /// Notify the actor with a message every interval until it is stopped (either directly with
@@ -289,11 +308,11 @@ impl<A: Actor> Context<A> {
         &mut self,
         duration: Duration,
         constructor: F,
-    ) -> Result<impl Future<Output = ()>, ActorShutdown>
-    where
-        F: Send + 'static + Fn() -> M,
-        M: Send + 'static,
-        A: Handler<M>,
+    ) -> Result<impl Future<Output=()>, ActorShutdown>
+        where
+            F: Send + 'static + Fn() -> M,
+            M: Send + 'static,
+            A: Handler<M>,
     {
         let addr = self.address()?.downgrade();
         let mut stopped = addr.join();
@@ -328,10 +347,10 @@ impl<A: Actor> Context<A> {
         &mut self,
         duration: Duration,
         notification: M,
-    ) -> Result<impl Future<Output = ()>, ActorShutdown>
-    where
-        M: Send + 'static,
-        A: Handler<M>,
+    ) -> Result<impl Future<Output=()>, ActorShutdown>
+        where
+            M: Send + 'static,
+            A: Handler<M>,
     {
         let addr = self.address()?.downgrade();
         let mut stopped = addr.join();
